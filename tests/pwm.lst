@@ -1,0 +1,370 @@
+
+ASEM-51 V1.3                                         Copyright (c) 2002 by W.W. Heinz                                         PAGE 1
+
+
+
+
+
+       MCS-51 Family Macro Assembler   A S E M - 5 1   V 1.3
+       =====================================================
+
+
+
+	Source File:	pwm.asm
+	Object File:	pwm.hex
+	List File:	pwm.lst
+
+
+
+ Line  I  Addr  Code            Source
+
+    1:				; Firmware pre kalibraciu PWM generatoru RST napatia zariadenia pre
+    2:				; programovanie mikrokontrolerov AT89Cx051 seriovym ISP programatorom
+    3:
+    4:				; Verzia 1.0
+    5:
+    6:				; Copyright (C) 2012 Jan Sucan <sucan@runbox.com>
+    7:
+    8:				; Permission is hereby granted, free of charge, to any person obtaining
+    9:				; a copy of this software and associated documentation files (the
+   10:				; "Software"), to deal in the Software without restriction, including
+   11:				; without limitation the rights to use, copy, modify, merge, publish,
+   12:				; distribute, sublicense, and/or sell copies of the Software, and to
+   13:				; permit persons to whom the Software is furnished to do so, subject to
+   14:				; the following conditions:
+   15:
+   16:				; The above copyright notice and this permission notice shall be
+   17:				; included in all copies or substantial portions of the Software.
+   18:
+   19:				; THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+   20:				; EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+   21:				; MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+   22:				; IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+   23:				; CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+   24:				; TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+   25:				; SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+   26:
+   27:				; ------------------------------------------------------------------------------
+   28:				; hardware
+   29:				; ------------------------------------------------------------------------------
+   30:		B      0081	grnled 	equ	p0.1		; zelena LED
+   31:		B      0080	redled	equ	p0.0		; cervena LED
+   32:		B      0090	button	equ	p1.0		; ovladacie tlacidlo
+   33:
+   34:		B      0082	rdy	equ	p0.2		; signaly pre AT89Cx051
+   35:		B      0083	xtal	equ	p0.3
+   36:		B      0084	prog 	equ	p0.4
+   37:		B      0085	m0 	equ	p0.5
+   38:		B      0086	m1 	equ	p0.6
+   39:		B      0087	m2 	equ	p0.7
+   40:		D      00A0	pdata	equ	p2
+   41:		B      00B5	rstsw	equ	p3.5		; spinanie RST napatia
+   42:		B      00B6	vccsw	equ	p3.6		; spinanie napajacieho napatia
+   43:
+
+ASEM-51 V1.3                                         Copyright (c) 2002 by W.W. Heinz                                         PAGE 2
+
+
+
+ Line  I  Addr  Code            Source
+
+   44:				; ------------------------------------------------------------------------------
+   45:				; konstanty a premenne
+   46:				; ------------------------------------------------------------------------------
+   47:				; konstanty casovacov pri taktovacej frekvencii 24 MHz v jednotkach 0,5 us
+   48:		N      0212	period  equ     530		; perioda PWM signalu
+   49:		N      0012	volt    equ     18		; aktivna polperioda PWM signalu (pre 5 V)
+   50:								; odmeranie casu 0,5 ms
+   51:		N      0017	halfmsl	equ	low (0ffffh - 1000)
+   52:		N      00FC	halfmsh	equ	high (0ffffh - 1000)
+   53:
+   54:				; ------------------------------------------------------------------------------
+   55:				; kod programu
+   56:				; ------------------------------------------------------------------------------
+   57:					cseg
+   58:
+   59:		N      0000		org	00h
+   60:	  0000	01 0D			ajmp	main		; hlavny program
+   61:
+   62:		N      000B		org	0bh
+   63:	  000B	01 5D			ajmp	rstpwm		; obsluha casovaca PWM generatoru
+   64:
+   65:				; ------------------------------------------------------------------------------
+   66:				; hlavny program
+   67:				; ------------------------------------------------------------------------------
+   68:	  000D	D2 81		main:	setb	grnled		; zhasni obe LED
+   69:	  000F	D2 80			setb	redled
+   70:
+   71:	  0011	75 89 11		mov	tmod,#00010001b	; dva 16 bitove casovace
+   72:
+   73:	  0014	D2 AF			setb	ea		; povol vsetky prerusenia
+   74:
+   75:	  0016	11 7F			acall	rst5v
+   76:	  0018	C2 81			clr	grnled		; zasviet zelenu LED
+   77:
+   78:				; pri testovani PWM generatoru RST napatia simuluj cinnost ostatnych signalov.
+   79:				; Nastavuj na ostatnych vyvodoch patice AT89Cx051 rozne logicke urovne po rozny
+   80:				; cas. Pseudonahodne hodnoty ziskavaj z neprazdnych bajtov pamate programu.
+   81:	  001A	90 00 00		mov	dptr,#0		; vyberaj bajty od zaciatku pamate programu
+   82:	  001D	C2 D5			clr	f0
+   83:	  001F	E5 83		loop:	mov	a,dph		; vyberaj len bajty z neprazdnej oblasti pamate
+   84:	  0021	B4 00 0A		cjne	a,#high (lastinst),next
+   85:	  0024	E5 82			mov	a,dpl
+   86:	  0026	B4 C2 05		cjne	a,#low (lastinst),next
+   87:	  0029	90 00 00		mov	dptr,#0
+   88:	  002C	B2 D5			cpl	f0		; kazdy druhy priechod ziskanu hodnotu zneguj
+   89:
+   90:	  002E	74 00		next:	mov	a,#0		; vyber bajt
+   91:	  0030	93			movc	a,@a+dptr
+   92:
+   93:	  0031	20 D5 01		jb	f0,nocpl
+   94:	  0034	F4			cpl	a
+   95:	  0035	F5 A0		nocpl:	mov	pdata,a
+   96:	  0037	95 F0			subb	a,b		; odcitaj hodnotu ziskanu z predchadzajuceho
+   97:								; bajtu
+   98:	  0039	13			rrc	a		; rozkopiruj bity na jednotlive vyvody
+   99:	  003A	92 82			mov 	rdy,c
+
+ASEM-51 V1.3                                         Copyright (c) 2002 by W.W. Heinz                                         PAGE 3
+
+
+
+ Line  I  Addr  Code            Source
+
+  100:	  003C	13			rrc	a
+  101:	  003D	92 83			mov 	xtal,c
+  102:	  003F	13			rrc	a
+  103:	  0040	92 84			mov 	prog,c
+  104:	  0042	13			rrc	a
+  105:	  0043	92 85			mov 	m0,c
+  106:	  0045	13			rrc	a
+  107:	  0046	92 86			mov 	m1,c
+  108:	  0048	13			rrc	a
+  109:	  0049	92 87			mov 	m2,c
+  110:	  004B	13			rrc	a
+  111:	  004C	92 B6			mov	vccsw,c
+  112:	  004E	11 55			acall	pause		; cakaj
+  113:	  0050	F5 F0			mov	b,a		; uloz aktualnu hodnotu
+  114:	  0052	A3			inc	dptr		; dalsi bajt
+  115:	  0053	01 1F			ajmp	loop
+  116:
+  117:	  0055	FA		pause:	mov	r2,a
+  118:	  0056	A9 F0			mov	r1,b
+  119:	  0058	D9 FE			djnz	r1,$
+  120:	  005A	DA FC			djnz	r2,$-2
+  121:	  005C	22			ret
+  122:
+  123:				; ------------------------------------------------------------------------------
+  124:				; obsluzne podprogramy
+  125:				; ------------------------------------------------------------------------------
+  126:				; obsluha casovaca PWM generatoru
+  127:	  005D	C2 8C		rstpwm: clr	tr0		; zastav casovac pre konzistentnu zmenu hodnoty
+  128:	  005F	10 B5 0B		jbc	rstsw,rstpwm_low
+  129:	  0062	D2 B5			setb	rstsw
+  130:	  0064	75 8A ED	        mov     tl0,#low (0ffffh - volt)
+  131:	  0067	75 8C FF	        mov     th0,#high (0ffffh - volt)
+  132:	  006A			rstpwm_exit:
+  133:	  006A	D2 8C			setb	tr0		; znovu spust casovac
+  134:	  006C	32		        reti
+  135:	  006D			rstpwm_low:
+  136:	  006D	75 8A FF	        mov     tl0,#low (0ffffh - period + volt)
+  137:	  0070	75 8C FD	        mov     th0,#high (0ffffh - period + volt)
+  138:	  0073	01 6A			ajmp	rstpwm_exit
+  139:
+  140:				; nastavenie RST = 0 V
+  141:	  0075	C2 A9		rst0v:	clr     et0		; nepotrebuje obsluhu casovaca 0
+  142:	  0077	C2 B5			clr	rstsw
+  143:	  0079	78 44			mov	r0,#low (580)	; cakaj >286,5 ms na dosiahnutie napatia 0,5 V
+  144:	  007B	79 02			mov	r1,#high (580)
+  145:	  007D	01 A2		        ajmp    rstwait
+  146:
+  147:				; nastavenie RST = 5 V
+  148:	  007F	10 B5 08	rst5v:	jbc	rstsw,rst5v_down
+  149:	  0082	D2 B5			setb	rstsw		; pull-up impulz
+  150:	  0084	78 0B			mov	r0,#low (11)	; cakaj 5,5 ms
+  151:	  0086	79 00			mov	r1,#high (11)
+  152:	  0088	01 8E		        ajmp    rst5v_l0
+  153:	  008A			rst5v_down:			; pull-down impulz
+  154:	  008A	78 9F			mov	r0,#low (159)	; cakaj 79,5 ms
+  155:	  008C	79 00			mov	r1,#high (159)
+
+ASEM-51 V1.3                                         Copyright (c) 2002 by W.W. Heinz                                         PAGE 4
+
+
+
+ Line  I  Addr  Code            Source
+
+  156:	  008E			rst5v_l0:
+  157:	  008E	11 A5			acall	wait
+  158:	  0090	D2 A9			setb    et0		; povol prerusenie od casovaca 0
+  159:	  0092	D2 8D		        setb    tf0		; vyvolaj obsluhu prerusenia od casovaca 0
+  160:	  0094	78 28			mov	r0,#low (40)	; cakaj 20 ms na ustalenie napatia 5 V
+  161:	  0096	79 00			mov	r1,#high (40)
+  162:	  0098	01 A2		        ajmp    rstwait
+  163:
+  164:				; nastavenie RST = 12 V
+  165:	  009A	C2 A9		rst12v:	clr     et0		; nepotrebuje obsluhu casovaca 0
+  166:	  009C	D2 B5			setb	rstsw
+  167:	  009E	78 64			mov	r0,#low (100)	; cakaj >44 ms na dosiahnutie napatia 12 V
+  168:	  00A0	79 00			mov	r1,#high (100)
+  169:	  00A2			rstwait:
+  170:	  00A2	11 A5		        acall	wait
+  171:	  00A4	22		        ret
+  172:
+  173:				; ------------------------------------------------------------------------------
+  174:				; cakanie zadaneho poctu 0,5 ms
+  175:	  00A5	B8 00 04	wait:	cjne	r0,#0,wait_next	; detekuj koniec cakania
+  176:	  00A8	B9 00 01		cjne	r1,#0,wait_next
+  177:	  00AB	22			ret
+  178:	  00AC			wait_next:
+  179:	  00AC	18			dec	r0		; zniz 16 bitove pocitadlo
+  180:	  00AD	B8 FF 01		cjne	r0,#0ffh,$+4	; detekuj vypozicku
+  181:	  00B0	19			dec	r1
+  182:	  00B1	C2 8E			clr	tr1		; zastav casovac pre konzistentnu zmenu hodnoty
+  183:	  00B3	C2 8F			clr	tf1
+  184:	  00B5	75 8B 17	 	mov	tl1,#halfmsl	; cakaj 0,5 ms
+  185:	  00B8	75 8D FC	 	mov	th1,#halfmsh
+  186:	  00BB	D2 8E			setb	tr1		; znovu spust casovac
+  187:	  00BD	30 8F FD	 	jnb	tf1,$
+  188:	  00C0	01 A5			ajmp	wait
+  189:
+  190:				; ----------------------------------------------------------------------
+  191:				; adresa bajtu za poslednou instrukciou tohoto programu
+  192:	  00C2			lastinst:
+  193:
+  194:					end
+
+
+
+
+
+                     register banks used:  ---
+
+                     no errors
+
+
+
+
+ASEM-51 V1.3                                         Copyright (c) 2002 by W.W. Heinz                                         PAGE 5
+
+
+
+
+
+	       L I S T   O F   S Y M B O L S
+	       =============================
+
+
+SYMBOL				  TYPE     VALUE	LINE
+------------------------------------------------------------
+??ASEM_51			  NUMBER    8051
+??VERSION			  NUMBER    0130
+AC				  BIT	      D6
+ACC				  DATA	      E0
+B				  DATA	      F0
+BUTTON				  NUMBER    0090	  32
+CY				  BIT	      D7
+DPH				  DATA	      83
+DPL				  DATA	      82
+EA				  BIT	      AF
+ES				  BIT	      AC
+ET0				  BIT	      A9
+ET1				  BIT	      AB
+EX0				  BIT	      A8
+EX1				  BIT	      AA
+EXTI0				  CODE	    0003
+EXTI1				  CODE	    0013
+F0				  BIT	      D5
+GRNLED				  NUMBER    0081	  30
+HALFMSH				  NUMBER    00FC	  52
+HALFMSL				  NUMBER    0017	  51
+IE				  DATA	      A8
+IE0				  BIT	      89
+IE1				  BIT	      8B
+INT0				  BIT	      B2
+INT1				  BIT	      B3
+IP				  DATA	      B8
+IT0				  BIT	      88
+IT1				  BIT	      8A
+LASTINST			  CODE	    00C2	 192
+LOOP				  CODE	    001F	  83
+M0				  NUMBER    0085	  37
+M1				  NUMBER    0086	  38
+M2				  NUMBER    0087	  39
+MAIN				  CODE	    000D	  68
+NEXT				  CODE	    002E	  90
+NOCPL				  CODE	    0035	  95
+OV				  BIT	      D2
+P				  BIT	      D0
+P0				  DATA	      80
+P1				  DATA	      90
+P2				  DATA	      A0
+P3				  DATA	      B0
+PAUSE				  CODE	    0055	 117
+PCON				  DATA	      87
+PDATA				  NUMBER    00A0	  40
+PERIOD				  NUMBER    0212	  48
+PROG				  NUMBER    0084	  36
+PS				  BIT	      BC
+PSW				  DATA	      D0
+
+ASEM-51 V1.3                                         Copyright (c) 2002 by W.W. Heinz                                         PAGE 6
+
+
+
+SYMBOL				  TYPE     VALUE	LINE
+------------------------------------------------------------
+PT0				  BIT	      B9
+PT1				  BIT	      BB
+PX0				  BIT	      B8
+PX1				  BIT	      BA
+RB8				  BIT	      9A
+RD				  BIT	      B7
+RDY				  NUMBER    0082	  34
+REDLED				  NUMBER    0080	  31
+REN				  BIT	      9C
+RESET				  CODE	    0000
+RI				  BIT	      98
+RS0				  BIT	      D3
+RS1				  BIT	      D4
+RST0V				  CODE	    0075	 141
+RST12V				  CODE	    009A	 165
+RST5V				  CODE	    007F	 148
+RST5V_DOWN			  CODE	    008A	 153
+RST5V_L0			  CODE	    008E	 156
+RSTPWM				  CODE	    005D	 127
+RSTPWM_EXIT			  CODE	    006A	 132
+RSTPWM_LOW			  CODE	    006D	 135
+RSTSW				  NUMBER    00B5	  41
+RSTWAIT				  CODE	    00A2	 169
+RXD				  BIT	      B0
+SBUF				  DATA	      99
+SCON				  DATA	      98
+SINT				  CODE	    0023
+SM0				  BIT	      9F
+SM1				  BIT	      9E
+SM2				  BIT	      9D
+SP				  DATA	      81
+T0				  BIT	      B4
+T1				  BIT	      B5
+TB8				  BIT	      9B
+TCON				  DATA	      88
+TF0				  BIT	      8D
+TF1				  BIT	      8F
+TH0				  DATA	      8C
+TH1				  DATA	      8D
+TI				  BIT	      99
+TIMER0				  CODE	    000B
+TIMER1				  CODE	    001B
+TL0				  DATA	      8A
+TL1				  DATA	      8B
+TMOD				  DATA	      89
+TR0				  BIT	      8C
+TR1				  BIT	      8E
+TXD				  BIT	      B1
+VCCSW				  NUMBER    00B6	  42
+VOLT				  NUMBER    0012	  49
+WAIT				  CODE	    00A5	 175
+WAIT_NEXT			  CODE	    00AC	 178
+WR				  BIT	      B6
+XTAL				  NUMBER    0083	  35
