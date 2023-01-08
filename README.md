@@ -1,3 +1,10 @@
+***
+
+**This is a frozen project. It is intended to provide authentic snapshot of the
+history with all the good things and all the things that could be improved.**
+
+***
+
 # AT89Cx051 programming using a serial ISP programmer
 
 The article was published in November 2013 in Czech magazine [Praktická
